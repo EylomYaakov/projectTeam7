@@ -76,10 +76,10 @@ public class SimpleClient extends AbstractClient {
     }
 
     public static ConnectedUser getUser() {
-        if(user == null){
-            ConnectedUser user = new ConnectedUser("a", "a", "a", "a", "subscription");
+      /* if(user == null){
+            ConnectedUser user = new ConnectedUser("~", "~", "~", "~", "subscription");
             return user;
-        }
+        }*/
         return user;
     }
 

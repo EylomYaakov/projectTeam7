@@ -93,9 +93,8 @@ public class SignUpController {
             if(accountType.startsWith("shop")){
                 accountType = accountType.substring(14);
             }
-            ConnectedUser newUser = new ConnectedUser(
-                    username.getText(), password.getText(), idField.getText(), creditCard.getText(), accountType
-            );
+            ConnectedUser newUser = new ConnectedUser(username.getText(), password.getText(), idField.getId(), creditCard.getText(), accountType);
+            SimpleClient.setUser(newUser);
             try {
                 SimpleClient.getClient().sendToServer(newUser);
                 App.switchScreen("menu");

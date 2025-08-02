@@ -8,8 +8,6 @@ import java.io.IOException;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
-import java.time.LocalDate;
-
 
 public class SimpleServer extends AbstractServer {
 
@@ -28,32 +26,31 @@ public class SimpleServer extends AbstractServer {
 		}
 		DatabaseManager.connect(); // Connect using DatabaseManager
 		DatabaseInitializer.initializeDatabase();
-		notifyExpiringSubscriptions();
 
 	}
 
 
 	@Override
 	protected void handleMessageFromClient(Object msg, ConnectionToClient client) {
-		if (msg instanceof String) {
+		if(msg instanceof String) {
 
 			String text = (String) msg;
 			System.out.println(text);
-
 			System.out.println("Database users: ");
 			DatabaseManager.printAllUsers();
 			System.out.println("Connected users: ");
 
 			for (ConnectedUser cU : ConnectedList) {
 				System.out.println("🟢 Connected: " +
-						"Username = " + cU.getUsername());
+						"Username = " + cU.getUsername() );
 			}
 
-			if (text.startsWith("GET_CATALOG")) {
+			if (text.equals("GET_CATALOG")){
 				// Client requested the full catalog
 				SubscribedClient exists = findClient(client);
 				if (exists == null) {
 					SubscribedClient connection = new SubscribedClient(client);
+					System.out.println(connection.getUsername());
 					SubscribersList.add(connection);
 				}
 				databaseManager.sendCatalog(client);
@@ -72,7 +69,7 @@ public class SimpleServer extends AbstractServer {
 				if (parts.length == 3) {
 					int id = Integer.parseInt(parts[1]);
 					double newPrice = Double.parseDouble(parts[2]);
-					ChangePriceEvent event = DatabaseManager.updatePrice(client, id, newPrice);
+					ChangePriceEvent event =DatabaseManager.updatePrice(client, id, newPrice);
 					sendToAllClients(event);
 				}
 
@@ -80,7 +77,7 @@ public class SimpleServer extends AbstractServer {
 				SubscribedClient toRemove = findClient(client);
 				if (toRemove != null) {
 					SubscribersList.remove(toRemove);
-					if (!toRemove.getUsername().equals("~"))
+					if(!toRemove.getUsername().equals("~"))
 						for (ConnectedUser user : ConnectedList) {
 							if (user.getUsername().equals(toRemove.getUsername())) {
 								ConnectedUser userToRemove = user;
@@ -92,44 +89,6 @@ public class SimpleServer extends AbstractServer {
 				}
 
 			}
-			else if (text.startsWith("SUBSCRIBE:")) {
-				// פורמט: SUBSCRIBE:<id>
-				String[] parts = text.split(":");
-				if (parts.length == 2) {
-					try {
-						int userId = Integer.parseInt(parts[1]);
-						java.time.LocalDate start = java.time.LocalDate.now();
-						java.time.LocalDate end   = start.plusYears(1);
-
-						// יצירה/עדכון מנוי לשנה
-						DatabaseManager.upsertSubscription(userId, start, end);
-						// רישום המכירה ליום הנוכחי (100₪ לפי הדרישה – החישוב הכספי בדו״ח)
-						DatabaseManager.addSubscriptionSale(start);
-
-						client.sendToClient("SUBSCRIBE_OK");
-
-					} catch (Exception ex) {
-						ex.printStackTrace();
-					}
-				}
-			}
-			else if (text.startsWith("LOGOUT:")) {
-				String uname = text.substring("LOGOUT:".length());
-
-				// הסרת המשתמש המחובר
-				ConnectedList.removeIf(u -> u.getUsername().equals(uname));
-
-				// נתק את השם מה-SubscribedClient הנוכחי (החיבור נשאר "אנונימי")
-				SubscribedClient sc = findClient(client);
-				if (sc != null) sc.setUsername("~");
-
-				try {
-					client.sendToClient(new LogoutEvent("LOGOUT_OK"));
-				} catch (IOException e) { e.printStackTrace(); }
-
-				return;
-			}
-
 			else if (text.startsWith("LOGIN:")) {
 				LoginEvent event;
 				Boolean response = handleLogin(text);
@@ -137,93 +96,103 @@ public class SimpleServer extends AbstractServer {
 				System.out.println(response);
 				if (response) {
 					boolean alreadyConnected = ConnectedList.stream()
-							.anyMatch(u -> u.getUsername().equals(username));
+							.anyMatch(user -> user.getUsername().equals(username));
+					System.out.println(alreadyConnected);
+					System.out.println(ConnectedList.size());
+
 					if (!alreadyConnected) {
 						ConnectedUser user = DatabaseManager.getUser(username);
-						SubscribedClient sc = findClient(client);
-						if (sc != null) sc.setUsername(username);
+						SubscribedClient subscribedClient = findClient(client);
+						subscribedClient.setUsername(username);
 						ConnectedList.add(user);
+						System.out.println("LOGIN_SUCCESS");
 						event = new LoginEvent("LOGIN_SUCCESS");
-
-						// שליחת הנתונים ללקוח:
-						try {
-							client.sendToClient(event);
-							client.sendToClient(user);                   // ConnectedUser
-							Integer dbId = DatabaseManager.getUserDbId(username);
-							if (dbId != null) client.sendToClient(dbId); // Integer (id מה־DB)
-						} catch (IOException ex) {
-							ex.printStackTrace();
-						}
-						return; // יציאה מהטיפול ב־LOGIN
 					} else {
 						event = new LoginEvent("Already logged in");
 					}
-				} else {
-					event = new LoginEvent("LOGIN_FAIL");
 				}
+				else {
+
+					 event = new LoginEvent("LOGIN_FAIL");
+				}
+				try {
+					client.sendToClient(event);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				}
+
+			else if (text.startsWith("LOGOUT:")) {
+				String username = extractUsername(text);
+				ConnectedUser user = DatabaseManager.getUser(username);
+
+				boolean removed = ConnectedList.removeIf(u -> u.getUsername().equals(username));
+
+				SubscribedClient subscribedClient = findClient(client);
+				if (subscribedClient != null) {
+					subscribedClient.setUsername(null); // איפוס המשתמש
+				}
+
+				LogoutEvent event;
+				if (removed) {
+					System.out.println("LOGOUT_OK");
+					event = new LogoutEvent("LOGOUT_OK");
+				} else {
+					System.out.println("LOGOUT_NOT_FOUND");
+					event = new LogoutEvent("LOGOUT_NOT_FOUND");
+				}
+
 				try {
 					client.sendToClient(event);
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
-			} else {
-				// Unknown message received
-				System.out.println("!! Unknown message format received: " + text);
 			}
 
-		} else if (msg instanceof ConnectedUser) {
-			ConnectedUser user = (ConnectedUser) msg;
+
+			else {
+					// Unknown message received
+					System.out.println("!! Unknown message format received: " + text);
+				}
+
+		}
+
+		else if(msg instanceof ConnectedUser) {
+			ConnectedUser user = (ConnectedUser)msg;
 			SignUpEvent event;
 			String username = user.getUsername();
 			String password = user.getPassword();
 			String personalId = user.getUserID();
 			String creditId = user.getCreditCard();
-			String role = user.getRole();
-
-			if (DatabaseManager.userExists(username)) {
+			String role = user.getRole();// can contain spaces like "chain account"
+			boolean userExists = DatabaseManager.userExists(username);
+			if (userExists) {
 				event = new SignUpEvent("USERNAME_TAKEN");
-				try {
-					client.sendToClient(event);
-				} catch (IOException e) {
-					e.printStackTrace();
+				System.out.println("USERNAME_TAKEN");
+			}
+			else {
+				boolean created = DatabaseManager.createUser(username, password, personalId, creditId, role);
+				if (created) {
+					ConnectedUser newUser = DatabaseManager.getUser(username);
+					ConnectedList.add(newUser);
+					event = new SignUpEvent("SIGNUP_SUCCESS");
+					System.out.println("SIGNUP_SUCCESS");
+				} else {
+					event = new SignUpEvent("SIGNUP_FAILED");
+					System.out.println("SIGNUP_FAILED");
+
 				}
-				return;
 			}
-
-			boolean created = DatabaseManager.createUser(username, password, personalId, creditId, role);
-			if (!created) {
-				event = new SignUpEvent("SIGNUP_FAILED");
-				try {
-					client.sendToClient(event);
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-				return;
-			}
-
-			// אם זה מנוי – שנה קדימה + רישום הכנסה לאותו יום
-			Integer dbId = DatabaseManager.getUserDbId(username);
-			if (dbId != null && role.equals("subscription")) {
-				LocalDate start = LocalDate.now();
-				LocalDate end = start.plusYears(1); // בדיוק שנה
-				DatabaseManager.upsertSubscription(dbId, start, end);
-				DatabaseManager.addSubscriptionSale(start); // לרשימת ההכנסות לפי יום (100₪)
-			}
-
-			ConnectedUser newUser = DatabaseManager.getUser(username);
-			ConnectedList.add(newUser);
-			event = new SignUpEvent("SIGNUP_SUCCESS");
-
-			try {
+			try{
 				client.sendToClient(event);
-				client.sendToClient(newUser);
-				if (dbId != null) client.sendToClient(dbId);
-			} catch (IOException e) {
+			}
+			catch (IOException e) {
 				e.printStackTrace();
 			}
-			return;
+
 		}
 	}
+
 
 		private String extractUsername (String loginMsg){
 			String[] parts = loginMsg.split(":", 3);
@@ -251,7 +220,7 @@ public class SimpleServer extends AbstractServer {
 			if (!SubscribersList.isEmpty()) {
 				for (SubscribedClient subscribedClient : SubscribersList) {
 					if (subscribedClient.getClient().equals(client)) {
-						//SubscribersList.remove(subscribedClient);
+						SubscribersList.remove(subscribedClient);
 						return subscribedClient;
 					}
 				}
@@ -283,31 +252,7 @@ public class SimpleServer extends AbstractServer {
 			}
 		}
 
-	private SubscribedClient findClientByUsername(String username) {
-		for (SubscribedClient sc : SubscribersList) {
-			if (username.equals(sc.getUsername())) return sc;
-		}
-		return null;
+
+
+
 	}
-
-
-	private void notifyExpiringSubscriptions() {
-		LocalDate tomorrow = LocalDate.now().plusDays(1);
-		List<Integer> ids = DatabaseManager.getSubscriptionsExpiringOn(tomorrow);
-		if (ids.isEmpty()) return;
-
-		// שליחת הודעה רק אם הלקוח מחובר:
-		for (Integer id : ids) {
-			for (SubscribedClient sc : SubscribersList) {
-				// אם שמרתם username ב-SubscribedClient אפשר לתרגם ל-id דרך DB
-				// כאן דוגמה פשוטה: שליחת הודעה גורפת
-				try {
-					sc.getClient().sendToClient("NOTIFY: Your subscription expires tomorrow");
-				} catch (IOException e) { e.printStackTrace(); }
-			}
-		}
-	}
-
-
-
-}
